@@ -40,10 +40,6 @@
     (ok (nft-get-owner? evolutionary-creature id))
 )
 
-(define-read-only (get-token-uri (id uint))
-    (ok (some (concat "https://api.example.com/metadata/" (uint-to-ascii id))))
-)
-
 (define-read-only (get-creature-traits (id uint))
     (map-get? creature-traits {id: id})
 )
@@ -56,7 +52,7 @@
         (and
             (>= (- current-block (get last-breed-block creature1)) BREEDING-COOLDOWN)
             (>= (- current-block (get last-breed-block creature2)) BREEDING-COOLDOWN)
-            (!= id1 id2)
+            (not (is-eq id1 id2))
         )
     )
 )
@@ -64,18 +60,33 @@
 ;; Generate pseudo-random DNA using block information
 (define-private (generate-random-dna)
     (let
-        ((entropy (concat (unwrap-panic (get-block-info? burnchain-header-hash (- block-height u1))) 
-                         (to-buff (concat (uint-to-ascii block-height) 
-                                        (uint-to-ascii (var-get last-token-id))))))
+        ((entropy (unwrap-panic (get-block-info? burnchain-header-hash (- block-height u1)))))
+        (sha256 entropy)
     )
-    (sha256 entropy))
 )
 
 ;; Combine parent DNA for breeding
 (define-private (combine-parent-dna (dna1 (buff 32)) (dna2 (buff 32)))
     (let
-        ((combined (concat (slice? dna1 u0 u16) (slice? dna2 u16 u32))))
+        ((slice1 (unwrap-panic (slice? dna1 u0 u16)))
+         (slice2 (unwrap-panic (slice? dna2 u16 u32)))
+         (combined (concat slice1 slice2)))
         (sha256 combined)
+    )
+)
+
+;; Validation functions
+(define-private (is-valid-id (id uint))
+    (and 
+        (>= id u1)
+        (<= id (var-get last-token-id))
+    )
+)
+
+(define-private (is-valid-operator (operator principal))
+    (and 
+        (not (is-eq operator CONTRACT-OWNER))
+        (not (is-eq operator tx-sender))
     )
 )
 
@@ -147,32 +158,36 @@
 )
 
 (define-public (interact (id uint))
-    (let
-        ((creature (unwrap! (map-get? creature-traits {id: id}) ERR-NOT-FOUND))
-         (current-points (get interaction-points creature))
-         (new-points (+ current-points u1)))
-        
-        ;; Add interaction point
-        (map-set creature-traits
-            {id: id}
-            (merge creature {interaction-points: new-points})
-        )
-        
-        ;; Check if evolution is possible
-        (if (and 
-                (>= new-points EVOLUTION-THRESHOLD)
-                (< (get evolution-stage creature) u4))
-            (begin
-                (map-set creature-traits
-                    {id: id}
-                    (merge creature {
-                        interaction-points: u0,
-                        evolution-stage: (+ (get evolution-stage creature) u1)
-                    })
-                )
-                (ok true)
+    (begin
+        ;; Validate ID
+        (asserts! (is-valid-id id) ERR-INVALID-PARAMS)
+        (let
+            ((creature (unwrap! (map-get? creature-traits {id: id}) ERR-NOT-FOUND))
+             (current-points (get interaction-points creature))
+             (new-points (+ current-points u1)))
+            
+            ;; Add interaction point
+            (map-set creature-traits
+                {id: id}
+                (merge creature {interaction-points: new-points})
             )
-            (ok false)
+            
+            ;; Check if evolution is possible
+            (if (and 
+                    (>= new-points EVOLUTION-THRESHOLD)
+                    (< (get evolution-stage creature) u4))
+                (begin
+                    (map-set creature-traits
+                        {id: id}
+                        (merge creature {
+                            interaction-points: u0,
+                            evolution-stage: (+ (get evolution-stage creature) u1)
+                        })
+                    )
+                    (ok true)
+                )
+                (ok false)
+            )
         )
     )
 )
@@ -180,13 +195,19 @@
 ;; SIP-009 NFT Interface Implementation
 (define-public (transfer (id uint) (sender principal) (recipient principal))
     (begin
+        ;; Validate inputs
+        (asserts! (is-valid-id id) ERR-INVALID-PARAMS)
+        (asserts! (not (is-eq recipient sender)) ERR-INVALID-PARAMS)
         (asserts! (is-eq tx-sender sender) ERR-NOT-AUTHORIZED)
         (nft-transfer? evolutionary-creature id sender recipient)
     )
 )
 
 (define-public (set-approved (operator principal) (approved bool))
-    (ok (map-set approved-operators {owner: tx-sender, operator: operator} approved))
+    (begin
+        (asserts! (is-valid-operator operator) ERR-INVALID-PARAMS)
+        (ok (map-set approved-operators {owner: tx-sender, operator: operator} approved))
+    )
 )
 
 (define-read-only (get-approved (id uint))
@@ -195,6 +216,6 @@
 
 ;; Contract initialization
 (begin
-    (try! (set-approved CONTRACT-OWNER true))
+    (map-set approved-operators {owner: tx-sender, operator: CONTRACT-OWNER} true)
     (print "Evolutionary NFT contract initialized")
 )
