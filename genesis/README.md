@@ -128,3 +128,22 @@ Recommended test scenarios:
 2. Handle all errors appropriately
 3. Verify breeding cooldowns
 4. Validate all input parameters
+
+## Project Structure
+
+evolutionary-nft/
+├── contracts/
+│   ├── nfta.clar           # Core contract
+│   ├── nft-marketplace.clar # New contract for trading
+│   └── nft-staking.clar    # New contract for staking mechanics
+├── tests/
+│   ├── nfta_test.ts
+│   ├── marketplace_test.ts
+│   └── staking_test.ts
+├── scripts/
+│   └── deployment/
+├── frontend/              # New web interface
+└── docs/
+    ├── README.md
+    ├── ARCHITECTURE.md
+    └── API.md
